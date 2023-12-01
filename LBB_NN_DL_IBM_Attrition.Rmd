@@ -1,0 +1,409 @@
+---
+title: 'LBB Neural Network Deep Learning (Tabular) : IBM Attrition'
+author: "Melissa Rusli"
+date: "29 November 2023"
+output:
+  html_document:
+    number_sections: true
+    df_print: paged
+    highlight: pygments
+    theme: lumen
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: true
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+```{r setup, include=FALSE}
+# clear-up the environment
+rm(list = ls())
+
+# chunk options
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  comment = "#>"
+)
+
+options(scipen = 999)
+```
+
+<style>
+body {
+text-align: justify}
+</style>
+
+
+# Introduction LBB Project
+
+In this LBB Project, we will analyze factors leading to employee attrition using fictional data set created by IBM data scientists provided to us from [Kaggle](https://www.kaggle.com/datasets/pavansubhasht/ibm-hr-analytics-attrition-dataset).
+
+The data used for our project will be the clean version derived from the above source which has been pre-processed by another source in [Github](https://github.com/AltruiMetavasi/keras-examples/blob/classification-dense/data/data-clean.csv), which we renamed as "ibm_attrition_data_clean.csv"
+
+The goal is to predict as close to the ground truth whether the classification of employee attrition `attrition` is "yes" or "no" based on several factors contributing to its prediction.
+
+# Data Preparation   {.tabset .tabset-pills}
+
+```{r message=FALSE}
+# Library Setup and Installation necessary packages
+# data wrangling
+library(dplyr)
+# neural network
+library(neuralnet) 
+library(keras)
+# cross-validation
+library(rsample)
+library(caret)
+library(recipes)
+library(tensorflow)
+# set graphic theme
+theme_set(theme_minimal())
+options(scipen = 999)
+```
+
+## Read Data
+
+Before we proceed further, let us explore our dataset
+
+```{r}
+# Read dataset
+ibm_raw <- read.csv("data_input/ibm_attrition_data_clean.csv")
+head(ibm_raw)  # Check dataset
+```
+
+We can also check on simple information containing in our dataset
+
+```{r}
+# Quick overview of dataset
+str(ibm_raw)
+```
+
+Based on the information above, we can summarize that our dataset contains **35** columns with the target variable named `attrition` and the rest **34** columns is the contributing factors leading to status of our employee attrition: `yes` or `no`. 
+
+Our current dataset has two different datatype which is `character` and `integer`. From our observation, we can noted that all the character type of columns can be changed to `factor` type.
+
+This is a classification case with 2 output ( attrition = yes/no )
+
+## Data Preprocessing
+
+### Remove Unnecessary Columns
+
+We will remove two columns named `employee_count` and `employee_number` as those do not provide relevant information for further analysis
+
+```{r}
+ibm_raw <- ibm_raw %>% 
+  select(-c(employee_count, employee_number))
+
+str(ibm_raw)
+```
+
+
+### Any Missing or Duplicated Values?
+
+First, let us confirm whether our dataset has any null values and duplicated info
+
+```{r}
+colSums(is.na(ibm_raw))
+sum(duplicated(ibm_raw))
+```
+
+There is neither missing values nor duplicated values in our dataset.
+
+
+### Train-Test Splitting
+
+Let us split our prepared dataset into ratio of 80:20 for train:test dataset using stratified sampling so that the sampling
+
+```{r}
+set.seed(100)
+
+index <- initial_split(data = ibm_raw, # dataset used for training
+                       prop = 0.8, # 80% for training dataset
+                       strata = "attrition") 
+
+```
+
+Using library `recipes`, we will implemented the Pre-processing Data to prepare for further analysis :
+
+```{r}
+ibm_clean <- recipe(attrition ~ .,
+                    data = training(index)) %>% 
+  step_nzv(all_predictors()) %>% 
+  step_center(all_numeric()) %>%
+  step_scale(all_numeric()) %>%
+  step_dummy(all_nominal(), -attrition, one_hot = FALSE) %>%
+  prep()
+```
+
+
+Here we will process the splitting of Training and Testing Data
+
+```{r}
+ibm_train <- juice(ibm_clean)
+ibm_test <- bake(ibm_clean, testing(index))
+
+# Check the proportion table of Training Data
+prop.table(table(ibm_train$attrition))
+```
+
+```{r}
+# Check the proportion table of Testing Data
+prop.table(table(ibm_test$attrition))
+```
+
+Based on the above information, we noted that our *training and testing dataset* `ibm_train` and `ibm_test` respectively still maintain its balanced proportion with proportion of 84:16
+
+Next, we will start the process of Model Building to use with Neural Network
+
+### Step 1 : Separation Target and Predictor Variables & Conversion to Matrix
+
+```{r}
+train_x <- ibm_train %>% 
+  select(-attrition) %>%  # predictor variables only in our training dataset
+  data.matrix()  # change dataset into matrix type
+
+train_y <- to_categorical(as.numeric(ibm_train$attrition) - 1)  # target variable
+
+test_x <- ibm_test %>% 
+  select(-attrition) %>%  # predictor variables only in our training dataset
+  data.matrix()  # change dataset into matrix type
+
+test_y <- to_categorical(as.numeric(ibm_test$attrition) - 1)   # target variable
+```
+
+
+# Neural Network Architectural  {.tabset .tabset-pills}
+
+As our dataset is a classification with 2 (two) output values, therefore it is a case of `binary cross-entropy`
+
+## Model Deep Neural Network with `neuralnet` function
+
+```{r, fig.width=15, fig.height=10, fig.align='center', out.width="60%"}
+
+# Building Neural Network with 2 hidden layer with 5 and 3 neurons
+nn_ibm <- neuralnet(formula = attrition ~ .,
+                    data = ibm_train,
+                    hidden = c(5, 3),
+                    err.fct = "ce",
+                    act.fct = "logistic",
+                    linear.output = FALSE
+                    )
+
+plot(nn_ibm)
+```
+
+### Predicting the Output
+
+```{r}
+pred_nn <- compute(x = nn_ibm, 
+                   covariate = ibm_train)
+
+pred_nn$net.result %>% head()
+```
+
+```{r}
+# Convert probability into class
+pred_nn_class <- ifelse(pred_nn$net.result > 0.5,
+                        1, # if pred value > 0.5, then the class value is 1
+                        0) # otherwise, the class value is 0
+
+pred_nn_class %>% head()
+```
+
+
+## Model NN with Keras
+
+Let us first create object `input_dim` to store information of the number of columns from predictor variables and number of categories from target variables into object `num_class`
+
+```{r}
+input_dim <- ncol(train_x)  # number of columns of predictor variables
+num_class <- n_distinct(ibm_train$attrition) # number of target variables
+input_dim
+num_class
+```
+
+The **input layer** will be equals to the number of columns of predictor variables which we have defined above as `input_dim` 
+
+The **output layer** of our modeling is a binary classification with ONLY **two** output as "yes" or "no", therefore the `Loss Function` used will be **Binary Cross Entropy**
+
+As it is a binary classification case, the `Activation Function` used will be **logistic / sigmoid**
+
+In summary, our Neural Network model will using the following fixed parameter:
+
+-   `input layer` = 44 predictors
+-   `output layer` = 2 neurons
+-   `activation`: "sigmoid"
+
+
+```{r}
+tensorflow::set_random_seed(100)
+
+# Create architectural
+model1 <- keras_model_sequential(name="model1") %>% 
+
+  # First Hidden Layer
+  layer_dense(input_shape = input_dim, # number of predictors
+              units = input_dim, # number of nodes in the first hidden layer
+              activation = "sigmoid", 
+              name = "Hidden_layer") %>% 
+
+
+  # Output layer
+  layer_dense(units = num_class, 
+              activation = "sigmoid", 
+              name = "output")
+
+
+model1
+```
+
+### Model Compilation
+
+To compile the model, we will need to define the valuse of our error function, optimizer and evaluation metrics with `compile()` funtion.
+
+In this project, the parameters used will be:
+
+- **Error/Loss Function** : Classification with **two** class target values, therefore it is a *Binary Cross-Entropy function*
+- **Optimizer** : Stochastic Gradient Descent 
+- **learning_rate** : 0.5
+- **metrics** : accuracy because we would like to calculate how often the predictions equals to its "ground-truth" labels
+
+
+```{r}
+model1 %>% 
+  compile(loss = "binary_crossentropy",
+          optimizer = optimizer_sgd(learning_rate = 0.5),
+          metrics = "accuracy")
+
+model1
+```
+
+
+### Model Fitting
+
+Model Fitting using `fit()` function will have the following paramenter:
+
+- `x`: prediktor
+- `y`: target
+- `epochs`: number of iterations for training model
+- `batch_size`
+- `validation_data`: unseen data for metrics evalution (prediktor and target) while the model in training mode
+- `verbose`
+
+
+```{r}
+nrow(train_x)
+```
+
+Our training dataset has total of **1,175** number of rows, let us choose number of batch = 5 so that our batch size = **235** :
+
+- `batch_size` = 235
+
+```{r}
+history <- model1 %>% fit(x = train_x,
+                          y = train_y,
+                          epochs = 10,
+                          batch_size = 235,
+                          validation_data = list(test_x, test_y),
+                          verbose = 1
+                          )
+
+```
+
+```{r}
+plot(history)
+```
+
+```{r}
+# Compute Accuracy difference between train data with test data/validation
+(0.8391 - 0.8373) * 100
+```
+
+Based on the result above, our model at the beginning is overfitt but then it will reach quite optimal because the result generated has:
+
+- High Accuracy (> 83% ) for our train data and test data (validation)
+- Accuracy difference between train data (`accuracy`) with test data/validation (`val_accuracy`) = **0.18%** < 20% 
+
+Our current model is already optimal
+
+### Model Evaluation Machine Learning
+
+We will use `predict()` function to predict the result
+
+```{r}
+model1_pred <- predict(model1,
+                test_x) %>% 
+  k_argmax() %>% 
+  as.array() %>% 
+  as.factor()
+
+model1_pred %>% head()
+```
+
+
+## (Optional Model) Optimization Attempt 
+
+Let us create another model using different optimizer method with the following parameters tuning:
+
+```{r}
+tensorflow::set_random_seed(8)
+
+# Create architectural
+model2 <- keras_model_sequential(name="model2") %>% 
+
+  # First Hidden Layer
+  layer_dense(input_shape = input_dim, # number of predictors
+              units = input_dim, # number of nodes in the first hidden layer
+              activation = "sigmoid", 
+              name = "Hidden_layer") %>% 
+
+
+  # Output layer
+  layer_dense(units = num_class, 
+              activation = "sigmoid", 
+              name = "output")
+
+model2 %>% 
+  compile(loss = "binary_crossentropy",
+          optimizer = optimizer_adam(learning_rate = 0.2),
+          metrics = "accuracy")
+
+model2
+```
+
+```{r}
+history2 <- model2 %>% fit(x = train_x,
+                          y = train_y,
+                          epochs = 10,
+                          batch_size = 200,
+                          validation_data = list(test_x, test_y),
+                          verbose = 1
+                          )
+
+```
+
+```{r}
+plot(history2)
+```
+
+
+Using ADAM optimizer, the modelling is much worse and tend to be **underfitting**
+
+
+
+# Reference
+
+- [Askalgo: Neural Network and their Implementation](https://askalgo.netlify.app/#neural-network-and-their-implementation)
+
